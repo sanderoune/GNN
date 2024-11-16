@@ -94,5 +94,177 @@ nx.draw_networkx(G,
 plt.show()
 
 
-## 2) GRAPH CONVOLUTIONAL NETWORK
+## 2) GRAPH CONVOLUTIONAL NETWORK (GCN) INTRODUCTION
 
+# With graph data, the connections between nodes mustbe accounted for.
+#  typically, in networks, it’s assumed that similar nodes are more likely to be linked 
+# to each other than dissimilar ones, a phenomenon known as network homophily.
+
+# Unlike filters in Convolutional Neural Networks (CNNs), 
+# our weight matrix W is unique and shared among every node. 
+# But there is another issue: nodes do not have a fixed number of neighbors like pixels do.
+
+# To ensure a similar range of values for all nodes and comparability between them, 
+# we can normalize the result based on the degree of nodes, 
+# where degree refers to the number of connections a node has.
+# Features from nodes with numerous neighbors propagate much more easily than those from more isolated nodes. 
+# To offset this effect, they suggested assigning bigger weights to features from nodes with fewer neighbors, 
+# thus balancing the influence across all nodes. 
+
+## 3) IMPLEMENTING THE GCN
+
+# Graph Convolutional Layer -> implemented through GCNConv function from PyTorch Geometric.
+
+from torch.nn import Linear
+from torch_geometric.nn import GCNConv
+
+
+class GCN(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.gcn = GCNConv(dataset.num_features, 3)
+        self.out = Linear(3, dataset.num_classes) # yields 4 values, one for each class
+
+    def forward(self, x, edge_index):
+        h = self.gcn(x, edge_index).relu()
+        z = self.out(h)
+        return h, z
+
+model = GCN()
+print(model)
+
+# If we added a second GCN layer, 
+# our model would not only aggregate feature vectors from the neighbors of each node, 
+# but also from the neighbors of these neighbors.
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.02)
+
+# Calculate accuracy
+def accuracy(pred_y, y):
+    return (pred_y == y).sum() / len(y)
+
+# Data for animations
+embeddings = []
+losses = []
+accuracies = []
+outputs = []
+
+# Training loop
+for epoch in range(201):
+    # Clear gradients
+    optimizer.zero_grad()
+
+    # Forward pass
+    h, z = model(data.x, data.edge_index)
+
+    # Calculate loss function
+    loss = criterion(z, data.y)
+
+    # Calculate accuracy
+    acc = accuracy(z.argmax(dim=1), data.y)
+
+    # Compute gradients
+    loss.backward()
+
+    # Tune parameters
+    optimizer.step()
+
+    # Store data for animations
+    embeddings.append(h)
+    losses.append(loss)
+    accuracies.append(acc)
+    outputs.append(z.argmax(dim=1))
+
+    # Print metrics every 10 epochs
+    if epoch % 10 == 0:
+        print(f'Epoch {epoch:>3} | Loss: {loss:.2f} | Acc: {acc*100:.2f}%')
+
+
+
+from IPython.display import HTML
+from IPython.display import display
+from matplotlib import animation
+'''
+plt.rcParams["animation.bitrate"] = 3000
+
+def animate(i):
+    G = to_networkx(data, to_undirected=True)
+    nx.draw_networkx(G,
+                    pos=nx.spring_layout(G, seed=0),
+                    with_labels=True,
+                    node_size=800,
+                    node_color=outputs[i],
+                    cmap="hsv",
+                    vmin=-2,
+                    vmax=3,
+                    width=0.8,
+                    edge_color="grey",
+                    font_size=14
+                    )
+    plt.title(f'Epoch {i} | Loss: {losses[i]:.2f} | Acc: {accuracies[i]*100:.2f}%',
+              fontsize=18, pad=20)
+
+fig = plt.figure(figsize=(12, 12))
+plt.axis('off')
+
+anim = animation.FuncAnimation(fig, animate, \
+            np.arange(0, 200, 10), interval=500, repeat=True)
+html = HTML(anim.to_html5_video())
+display(html)
+'''
+# By aggregating features from neighboring nodes, 
+# the GNN learns a vector representation (or embedding) of every node in the network.
+# However, embeddings are the real products of GNNs. 
+
+# Print embeddings
+print(f'Final embeddings = {h.shape}')
+print(h)
+
+# As you can see, embeddings do not need to have the same dimensions as feature vectors. 
+# Here, I chose to reduce the number of dimensions from 34 (dataset.num_features) to three to get a nice visualization in 3D.
+
+# Get first embedding at epoch = 0
+embed = h.detach().cpu().numpy()
+
+fig = plt.figure(figsize=(12, 12))
+ax = fig.add_subplot(projection='3d')
+ax.patch.set_alpha(0)
+plt.tick_params(left=False,
+                bottom=False,
+                labelleft=False,
+                labelbottom=False)
+ax.scatter(embed[:, 0], embed[:, 1], embed[:, 2],
+           s=200, c=data.y, cmap="hsv", vmin=-2, vmax=3)
+
+plt.show()
+
+# We see every node from Zachary’s karate club with their true labels (and not the model’s predictions). 
+# For now, they’re all over the place since the GNN is not trained yet. 
+# But if we plot these embeddings at each step of the training loop, 
+# we’d be able to visualize what the GNN truly learns.
+
+def animate(i):
+    embed = embeddings[i].detach().cpu().numpy()
+    ax.clear()
+    ax.scatter(embed[:, 0], embed[:, 1], embed[:, 2],
+           s=200, c=data.y, cmap="hsv", vmin=-2, vmax=3)
+    plt.title(f'Epoch {i} | Loss: {losses[i]:.2f} | Acc: {accuracies[i]*100:.2f}%',
+              fontsize=18, pad=40)
+
+fig = plt.figure(figsize=(12, 12))
+plt.axis('off')
+ax = fig.add_subplot(projection='3d')
+plt.tick_params(left=False,
+                bottom=False,
+                labelleft=False,
+                labelbottom=False)
+
+anim = animation.FuncAnimation(fig, animate, \
+              np.arange(0, 200, 10), interval=800, repeat=True)
+html = HTML(anim.to_html5_video())
+
+display(html)
+
+# Our Graph Convolutional Network (GCN) has effectively learned embeddings that group similar nodes into distinct clusters. 
+# This enables the final linear layer to distinguish them into separate classes with ease.
